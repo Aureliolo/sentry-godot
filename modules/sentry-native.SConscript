@@ -111,6 +111,8 @@ cmake_gen += " -DSENTRY_BUILD_SHARED_LIBS=OFF"
 cmake_gen += " -DSENTRY_BACKEND=crashpad"
 cmake_gen += " -DSENTRY_SDK_NAME=\"sentry.native.godot\""
 cmake_gen += " -DCMAKE_BUILD_TYPE=RelWithDebInfo"
+# Fedora's GNUInstallDirs would put the libraries in lib64, where the link below does not look.
+cmake_gen += " -DCMAKE_INSTALL_LIBDIR=lib"
 
 if platform == "windows":
     cmake_gen += " -DSENTRY_BUILD_RUNTIMESTATIC=ON"

@@ -12,10 +12,15 @@ struct PendingReport {
 	std::string id;
 	// When the crash was written, in Unix seconds.
 	int64_t created = 0;
+	// The dump's absolute path (UTF-8).
+	std::string minidump;
 };
 
 // The reports still waiting to be uploaded in the database at p_database_path (UTF-8).
 std::vector<PendingReport> pending_reports(const std::string &p_database_path);
+
+// Deletes the waiting report p_id with its attachments; answers whether it was there to delete.
+bool delete_pending_report(const std::string &p_database_path, const std::string &p_id);
 
 // Deletes every waiting report with its attachments; answers how many were deleted.
 int delete_pending_reports(const std::string &p_database_path);

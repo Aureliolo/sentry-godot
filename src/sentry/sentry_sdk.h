@@ -128,6 +128,7 @@ public:
 	UserConsent get_user_consent() const { return (UserConsent)internal_sdk->get_user_consent(); }
 	Array get_pending_crash_reports() const { return internal_sdk->get_pending_crash_reports(); }
 	int discard_pending_crash_reports() { return internal_sdk->discard_pending_crash_reports(); }
+	bool discard_pending_crash_report(const String &p_id) { return internal_sdk->discard_pending_crash_report(p_id); }
 
 	_FORCE_INLINE_ SentryLogger *get_logger() const { return logger; }
 	_FORCE_INLINE_ SentryMetrics *get_metrics() const { return metrics; }

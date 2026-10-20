@@ -19,6 +19,14 @@ base::FilePath _to_path(const std::string &p_utf8) {
 #endif
 }
 
+std::string _from_path(const base::FilePath &p_path) {
+#if defined(_WIN32)
+	return base::WideToUTF8(p_path.value());
+#else
+	return p_path.value();
+#endif
+}
+
 // Never creates a database: a game that never started Crashpad has nothing waiting.
 std::unique_ptr<crashpad::CrashReportDatabase> _open(const std::string &p_database_path) {
 	return crashpad::CrashReportDatabase::InitializeWithoutCreating(_to_path(p_database_path));
@@ -40,9 +48,24 @@ std::vector<PendingReport> pending_reports(const std::string &p_database_path) {
 	std::vector<PendingReport> found;
 	std::unique_ptr<crashpad::CrashReportDatabase> db = _open(p_database_path);
 	for (const crashpad::CrashReportDatabase::Report &report : _pending(db.get())) {
-		found.push_back({ report.uuid.ToString(), (int64_t)report.creation_time });
+		found.push_back({ report.uuid.ToString(), (int64_t)report.creation_time, _from_path(report.file_path) });
 	}
 	return found;
+}
+
+bool delete_pending_report(const std::string &p_database_path, const std::string &p_id) {
+	crashpad::UUID uuid;
+	if (!uuid.InitializeFromString(p_id)) {
+		return false;
+	}
+	std::unique_ptr<crashpad::CrashReportDatabase> db = _open(p_database_path);
+	// Only a waiting report: one the handler has taken up or finished is not the caller's to delete.
+	for (const crashpad::CrashReportDatabase::Report &report : _pending(db.get())) {
+		if (report.uuid == uuid) {
+			return db->DeleteReport(uuid) == crashpad::CrashReportDatabase::kNoError;
+		}
+	}
+	return false;
 }
 
 int delete_pending_reports(const std::string &p_database_path) {

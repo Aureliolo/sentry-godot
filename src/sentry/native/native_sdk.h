@@ -60,6 +60,7 @@ public:
 	virtual int get_user_consent() const override;
 	virtual Array get_pending_crash_reports() const override;
 	virtual int discard_pending_crash_reports() override;
+	virtual bool discard_pending_crash_report(const String &p_id) override;
 
 	virtual void init() override;
 	virtual void close() override;

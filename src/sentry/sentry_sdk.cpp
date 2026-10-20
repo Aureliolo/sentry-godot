@@ -710,6 +710,7 @@ void SentrySDK::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_user_consent"), &SentrySDK::get_user_consent);
 	ClassDB::bind_method(D_METHOD("get_pending_crash_reports"), &SentrySDK::get_pending_crash_reports);
 	ClassDB::bind_method(D_METHOD("discard_pending_crash_reports"), &SentrySDK::discard_pending_crash_reports);
+	ClassDB::bind_method(D_METHOD("discard_pending_crash_report", "id"), &SentrySDK::discard_pending_crash_report);
 
 	ClassDB::bind_method(D_METHOD("get_current_scope"), &SentrySDK::get_current_scope);
 	ClassDB::bind_method(D_METHOD("with_scope", "callable"), &SentrySDK::with_scope);

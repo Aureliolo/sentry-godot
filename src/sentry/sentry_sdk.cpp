@@ -260,6 +260,12 @@ void SentrySDK::init(const Callable &p_configuration_callback) {
 		is_configuring = false;
 	}
 
+	if (options->is_require_user_consent_enabled()) {
+		runtime_config->forget_installation_id();
+	} else {
+		runtime_config->ensure_installation_id();
+	}
+
 	// Add built-in event processors.
 	options->add_event_processor(memnew(EnrichmentProcessor));
 	if (options->is_attach_screenshot_enabled()) {
@@ -673,6 +679,10 @@ void SentrySDK::_bind_methods() {
 	BIND_ENUM_CONSTANT(LEVEL_ERROR);
 	BIND_ENUM_CONSTANT(LEVEL_FATAL);
 
+	BIND_ENUM_CONSTANT(USER_CONSENT_UNKNOWN);
+	BIND_ENUM_CONSTANT(USER_CONSENT_REVOKED);
+	BIND_ENUM_CONSTANT(USER_CONSENT_GIVEN);
+
 	ClassDB::bind_method(D_METHOD("init", "configuration_callback"), &SentrySDK::init, DEFVAL(Callable()));
 	ClassDB::bind_method(D_METHOD("close"), &SentrySDK::close);
 	ClassDB::bind_method(D_METHOD("is_enabled"), &SentrySDK::is_enabled);
@@ -693,6 +703,13 @@ void SentrySDK::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_attribute", "name", "value"), &SentrySDK::set_attribute);
 	ClassDB::bind_method(D_METHOD("remove_attribute", "name"), &SentrySDK::remove_attribute);
 	ClassDB::bind_method(D_METHOD("start_new_trace"), &SentrySDK::start_new_trace);
+
+	ClassDB::bind_method(D_METHOD("give_user_consent"), &SentrySDK::give_user_consent);
+	ClassDB::bind_method(D_METHOD("revoke_user_consent"), &SentrySDK::revoke_user_consent);
+	ClassDB::bind_method(D_METHOD("reset_user_consent"), &SentrySDK::reset_user_consent);
+	ClassDB::bind_method(D_METHOD("get_user_consent"), &SentrySDK::get_user_consent);
+	ClassDB::bind_method(D_METHOD("get_pending_crash_reports"), &SentrySDK::get_pending_crash_reports);
+	ClassDB::bind_method(D_METHOD("discard_pending_crash_reports"), &SentrySDK::discard_pending_crash_reports);
 
 	ClassDB::bind_method(D_METHOD("get_current_scope"), &SentrySDK::get_current_scope);
 	ClassDB::bind_method(D_METHOD("with_scope", "callable"), &SentrySDK::with_scope);

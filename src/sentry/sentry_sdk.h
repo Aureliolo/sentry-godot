@@ -34,6 +34,13 @@ public:
 	// This structure is needed to avoid circular dependencies between this and other headers that use Level enum.
 	using Level = sentry::Level;
 
+	// sentry-native's values, so they pass through unchanged.
+	enum UserConsent {
+		USER_CONSENT_UNKNOWN = -1,
+		USER_CONSENT_REVOKED = 0,
+		USER_CONSENT_GIVEN = 1,
+	};
+
 	struct TraceContext {
 		String trace_id;
 		String parent_span_id;
@@ -113,6 +120,15 @@ public:
 	void start_new_trace();
 	void set_trace(const String &p_trace_id, const String &p_parent_span_id);
 
+	// * Consent, held to when SentryOptions.require_user_consent is on.
+
+	void give_user_consent() { internal_sdk->set_user_consent(USER_CONSENT_GIVEN); }
+	void revoke_user_consent() { internal_sdk->set_user_consent(USER_CONSENT_REVOKED); }
+	void reset_user_consent() { internal_sdk->set_user_consent(USER_CONSENT_UNKNOWN); }
+	UserConsent get_user_consent() const { return (UserConsent)internal_sdk->get_user_consent(); }
+	Array get_pending_crash_reports() const { return internal_sdk->get_pending_crash_reports(); }
+	int discard_pending_crash_reports() { return internal_sdk->discard_pending_crash_reports(); }
+
 	_FORCE_INLINE_ SentryLogger *get_logger() const { return logger; }
 	_FORCE_INLINE_ SentryMetrics *get_metrics() const { return metrics; }
 	_FORCE_INLINE_ SentryBadCode *get_bad_code() const { return bad_code; }
@@ -167,3 +183,4 @@ public:
 } // namespace sentry
 
 VARIANT_ENUM_CAST(sentry::SentrySDK::Level);
+VARIANT_ENUM_CAST(sentry::SentrySDK::UserConsent);

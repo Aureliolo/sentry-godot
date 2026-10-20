@@ -123,7 +123,11 @@ if platform == "windows":
     else:
         print(f"ERROR: Unsupported architecture '{arch}' for platform '{platform}'")
         Exit(1)
-    cmake_gen += f' -G "Visual Studio 17 2022" {cmake_arch}'
+    # CMAKE_GENERATOR in the environment names a newer Visual Studio where 2022 is not installed.
+    if "CMAKE_GENERATOR" in os.environ:
+        cmake_gen += f" {cmake_arch}"
+    else:
+        cmake_gen += f' -G "Visual Studio 17 2022" {cmake_arch}'
 elif platform == "linux":
     if arch == "x86_32":
         cmake_gen += ' -DSENTRY_BUILD_FORCE32=ON -DCMAKE_C_FLAGS="-m32" -DCMAKE_CXX_FLAGS="-m32" -DLINK_OPTIONS="-m32"'

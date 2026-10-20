@@ -26,6 +26,11 @@ public:
 
 	void load_file(const String &p_conf_path);
 
+	// The id is made and written only for an SDK that runs without asking for consent: a
+	// persistent identifier on the player's machine is itself something to ask about.
+	void ensure_installation_id();
+	void forget_installation_id() { installation_id = String(); }
+
 	RuntimeConfig();
 };
 

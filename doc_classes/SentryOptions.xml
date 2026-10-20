@@ -195,6 +195,9 @@
 		<member name="screenshot_level" type="int" setter="set_screenshot_level" getter="get_screenshot_level" enum="SentrySDK.Level" default="4">
 			Specifies the minimum level of events for which screenshots will be captured. By default, screenshots are captured for fatal events. Changing this option may impact performance in the frames the screenshots are taken.
 		</member>
+		<member name="require_user_consent" type="bool" setter="set_require_user_consent" getter="is_require_user_consent_enabled" default="false">
+			If [code]true[/code], nothing is uploaded until [method SentrySDK.give_user_consent] is called. Until then crash reports stay on disk, see [method SentrySDK.get_pending_crash_reports], and are uploaded once consent is given, even in a later run. With it on, the SDK keeps no installation id on the user's machine and sends no session updates. Native platforms (Windows, Linux, macOS) only.
+		</member>
 		<member name="send_default_pii" type="bool" setter="set_send_default_pii" getter="is_send_default_pii_enabled" default="false">
 			If [code]true[/code], the SDK will include PII (Personally Identifiable Information) with the events.
 		</member>

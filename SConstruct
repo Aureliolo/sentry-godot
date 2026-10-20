@@ -183,8 +183,20 @@ sources += Glob("src/sentry/dotnet/*.cpp")
 
 # Backend-specific sources.
 if internal_sdk == SDK.NATIVE:
-    sources += Glob("src/sentry/native/*.cpp")
+    crash_database = "src/sentry/native/crash_database.cpp"
+    sources += Glob("src/sentry/native/*.cpp", exclude=[crash_database])
     env.Append(CPPDEFINES=["SDK_NATIVE"])
+    # Crashpad's headers, and the compatibility headers they lean on, reach only the one file
+    # that reads Crashpad's database, so they shadow nothing in the rest of the library.
+    crashpad = "modules/sentry-native/external/crashpad"
+    env_crashpad = env.Clone()
+    env_crashpad.Prepend(CPPPATH=[crashpad, crashpad + "/third_party/mini_chromium/mini_chromium"])
+    if platform == "windows":
+        env_crashpad.Prepend(CPPPATH=[crashpad + "/compat/win", crashpad + "/compat/non_mac"])
+        env_crashpad.Append(CPPDEFINES=["NOMINMAX", "WIN32_LEAN_AND_MEAN", "UNICODE", "_UNICODE"])
+    elif platform == "linux":
+        env_crashpad.Prepend(CPPPATH=[crashpad + "/compat/linux", crashpad + "/compat/non_win", crashpad + "/compat/non_mac"])
+    sources += [env_crashpad.SharedObject(crash_database)]
 elif internal_sdk == SDK.ANDROID:
     sources += Glob("src/sentry/android/*.cpp")
     env.Append(CPPDEFINES=["SDK_ANDROID"])

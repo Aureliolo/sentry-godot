@@ -126,6 +126,7 @@ private:
 	int max_breadcrumbs = 100;
 	int shutdown_timeout_ms = 2000;
 	bool send_default_pii = false;
+	bool require_user_consent = false;
 
 	bool attach_log = true;
 	bool attach_screenshot = false;
@@ -216,6 +217,9 @@ public:
 
 	_FORCE_INLINE_ bool is_send_default_pii_enabled() const { return send_default_pii; }
 	_FORCE_INLINE_ void set_send_default_pii(bool p_enabled) { send_default_pii = p_enabled; }
+
+	_FORCE_INLINE_ bool is_require_user_consent_enabled() const { return require_user_consent; }
+	_FORCE_INLINE_ void set_require_user_consent(bool p_enabled) { require_user_consent = p_enabled; }
 
 	_FORCE_INLINE_ bool is_attach_log_enabled() const { return attach_log; }
 	_FORCE_INLINE_ void set_attach_log(bool p_enabled) { attach_log = p_enabled; }

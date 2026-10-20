@@ -168,7 +168,9 @@ Dictionary make_device_context(const Ref<RuntimeConfig> &p_runtime_config) {
 
 	// Read/initialize installation id.
 	String installation_id = p_runtime_config->get_installation_id();
-	device_context["device_unique_identifier"] = installation_id;
+	if (!installation_id.is_empty()) {
+		device_context["device_unique_identifier"] = installation_id;
+	}
 
 #ifdef SDK_NATIVE
 	const native::PlatformInfo &platform = native::detect_platform();

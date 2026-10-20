@@ -100,6 +100,42 @@
 				Returns the ID of the last captured event.
 			</description>
 		</method>
+		<method name="get_pending_crash_reports" qualifiers="const">
+			<return type="Array" />
+			<description>
+				Returns the crash reports the crash handler holds on disk because [member SentryOptions.require_user_consent] is on and consent has not been given. Each is a [Dictionary] with [code]id[/code], the report's id, and [code]attachments[/code], a [PackedStringArray] of the absolute paths of the files that will be uploaded with it, such as the log, which may be rewritten before consent is given. Can be called before [method SentrySDK.init]. Native platforms only; elsewhere the array is empty.
+			</description>
+		</method>
+		<method name="get_user_consent" qualifiers="const">
+			<return type="int" enum="SentrySDK.UserConsent" />
+			<description>
+				Returns whether the user has given consent to send data, revoked it, or not answered. Consent persists between runs.
+			</description>
+		</method>
+		<method name="give_user_consent">
+			<return type="void" />
+			<description>
+				Records the user's consent and uploads what was held back while it was missing, including crash reports from earlier runs. Only has an effect when [member SentryOptions.require_user_consent] is on.
+			</description>
+		</method>
+		<method name="discard_pending_crash_reports">
+			<return type="int" />
+			<description>
+				Deletes every crash report the crash handler holds on disk waiting for consent, with its attachments, and returns how many were deleted. Native platforms only.
+			</description>
+		</method>
+		<method name="reset_user_consent">
+			<return type="void" />
+			<description>
+				Forgets the user's answer, so nothing is sent until consent is given again; crash reports are kept on disk meanwhile.
+			</description>
+		</method>
+		<method name="revoke_user_consent">
+			<return type="void" />
+			<description>
+				Records that the user refused consent. Nothing is sent; crash reports are kept on disk until discarded with [method SentrySDK.discard_pending_crash_reports].
+			</description>
+		</method>
 		<method name="init">
 			<return type="void" />
 			<param index="0" name="configuration_callback" type="Callable" default="Callable()" />
@@ -315,6 +351,15 @@
 		</constant>
 		<constant name="LEVEL_FATAL" value="4" enum="Level">
 			This is the highest level and is used for events that led to the application crashing.
+		</constant>
+		<constant name="USER_CONSENT_UNKNOWN" value="-1" enum="UserConsent">
+			The user has not answered; nothing is sent.
+		</constant>
+		<constant name="USER_CONSENT_REVOKED" value="0" enum="UserConsent">
+			The user refused; nothing is sent.
+		</constant>
+		<constant name="USER_CONSENT_GIVEN" value="1" enum="UserConsent">
+			The user agreed; data is sent.
 		</constant>
 	</constants>
 </class>

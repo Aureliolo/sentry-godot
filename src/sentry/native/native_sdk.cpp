@@ -588,6 +588,7 @@ Array NativeSDK::get_pending_crash_reports() const {
 		Dictionary report;
 		report["id"] = report_id;
 		report["created"] = pending.created;
+		report["minidump"] = String::utf8(pending.minidump.c_str());
 		report["attachments"] = attachments;
 		reports.append(report);
 	}
@@ -596,6 +597,10 @@ Array NativeSDK::get_pending_crash_reports() const {
 
 int NativeSDK::discard_pending_crash_reports() {
 	return crash_database::delete_pending_reports(_database_path().utf8().get_data());
+}
+
+bool NativeSDK::discard_pending_crash_report(const String &p_id) {
+	return crash_database::delete_pending_report(_database_path().utf8().get_data(), p_id.utf8().get_data());
 }
 
 NativeSDK::NativeSDK() {

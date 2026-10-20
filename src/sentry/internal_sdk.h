@@ -71,6 +71,7 @@ public:
 	virtual int get_user_consent() const { return -1; }
 	virtual Array get_pending_crash_reports() const { return Array(); }
 	virtual int discard_pending_crash_reports() { return 0; }
+	virtual bool discard_pending_crash_report(const String & /*p_id*/) { return false; }
 
 	virtual void init() = 0;
 	virtual void close() = 0;

@@ -103,7 +103,7 @@
 		<method name="get_pending_crash_reports" qualifiers="const">
 			<return type="Array" />
 			<description>
-				Returns the crash reports the crash handler holds on disk because [member SentryOptions.require_user_consent] is on and consent has not been given. Each is a [Dictionary] with [code]id[/code], the report's id, [code]created[/code], when the crash was written in Unix seconds, and [code]attachments[/code], a [PackedStringArray] of the absolute paths of the files that will be uploaded with it. Every file in the folder of those paths, [code]attachments/<id>[/code] beside the database, is uploaded with the report, so a file may be rewritten or added there before consent is given. Can be called before [method SentrySDK.init]. Native platforms only; elsewhere the array is empty.
+				Returns the crash reports the crash handler holds on disk because [member SentryOptions.require_user_consent] is on and consent has not been given. Each is a [Dictionary] with [code]id[/code], the report's id, [code]created[/code], when the crash was written in Unix seconds, [code]minidump[/code], the absolute path of the dump, and [code]attachments[/code], a [PackedStringArray] of the absolute paths of the files that will be uploaded with it. Every file in the folder of those paths, [code]attachments/<id>[/code] beside the database, is uploaded with the report, so a file may be rewritten or added there before consent is given. A game may also upload a report itself, as the crash handler would (the dump as [code]upload_file_minidump[/code] and each attachment under its own file name, to the DSN's minidump endpoint), and then delete it with [method SentrySDK.discard_pending_crash_report], which sends exactly the reports the user agreed to while consent stays withheld for any later crash. Can be called before [method SentrySDK.init]. Native platforms only; elsewhere the array is empty.
 			</description>
 		</method>
 		<method name="get_user_consent" qualifiers="const">
@@ -116,6 +116,13 @@
 			<return type="void" />
 			<description>
 				Records the user's consent and uploads what was held back while it was missing, including crash reports from earlier runs. Only has an effect when [member SentryOptions.require_user_consent] is on.
+			</description>
+		</method>
+		<method name="discard_pending_crash_report">
+			<return type="bool" />
+			<param index="0" name="id" type="String" />
+			<description>
+				Deletes the crash report [param id], with its attachments, if the crash handler still holds it on disk waiting for consent, and returns whether it did. A report the handler has already taken up for uploading is left alone. Native platforms only.
 			</description>
 		</method>
 		<method name="discard_pending_crash_reports">

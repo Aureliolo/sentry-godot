@@ -578,8 +578,8 @@ int NativeSDK::get_user_consent() const {
 Array NativeSDK::get_pending_crash_reports() const {
 	Array reports;
 	const String database = _database_path();
-	for (const std::string &id : crash_database::pending_report_ids(database.utf8().get_data())) {
-		const String report_id = String::utf8(id.c_str());
+	for (const crash_database::PendingReport &pending : crash_database::pending_reports(database.utf8().get_data())) {
+		const String report_id = String::utf8(pending.id.c_str());
 		const String folder = database.path_join("attachments").path_join(report_id);
 		PackedStringArray attachments;
 		for (const String &file : DirAccess::get_files_at(folder)) {
@@ -587,6 +587,7 @@ Array NativeSDK::get_pending_crash_reports() const {
 		}
 		Dictionary report;
 		report["id"] = report_id;
+		report["created"] = pending.created;
 		report["attachments"] = attachments;
 		reports.append(report);
 	}

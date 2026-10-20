@@ -103,7 +103,7 @@
 		<method name="get_pending_crash_reports" qualifiers="const">
 			<return type="Array" />
 			<description>
-				Returns the crash reports the crash handler holds on disk because [member SentryOptions.require_user_consent] is on and consent has not been given. Each is a [Dictionary] with [code]id[/code], the report's id, and [code]attachments[/code], a [PackedStringArray] of the absolute paths of the files that will be uploaded with it, such as the log, which may be rewritten before consent is given. Can be called before [method SentrySDK.init]. Native platforms only; elsewhere the array is empty.
+				Returns the crash reports the crash handler holds on disk because [member SentryOptions.require_user_consent] is on and consent has not been given. Each is a [Dictionary] with [code]id[/code], the report's id, [code]created[/code], when the crash was written in Unix seconds, and [code]attachments[/code], a [PackedStringArray] of the absolute paths of the files that will be uploaded with it. Every file in the folder of those paths, [code]attachments/<id>[/code] beside the database, is uploaded with the report, so a file may be rewritten or added there before consent is given. Can be called before [method SentrySDK.init]. Native platforms only; elsewhere the array is empty.
 			</description>
 		</method>
 		<method name="get_user_consent" qualifiers="const">

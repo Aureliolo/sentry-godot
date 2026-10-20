@@ -36,13 +36,13 @@ std::vector<crashpad::CrashReportDatabase::Report> _pending(crashpad::CrashRepor
 
 namespace sentry::native::crash_database {
 
-std::vector<std::string> pending_report_ids(const std::string &p_database_path) {
-	std::vector<std::string> ids;
+std::vector<PendingReport> pending_reports(const std::string &p_database_path) {
+	std::vector<PendingReport> found;
 	std::unique_ptr<crashpad::CrashReportDatabase> db = _open(p_database_path);
 	for (const crashpad::CrashReportDatabase::Report &report : _pending(db.get())) {
-		ids.push_back(report.uuid.ToString());
+		found.push_back({ report.uuid.ToString(), (int64_t)report.creation_time });
 	}
-	return ids;
+	return found;
 }
 
 int delete_pending_reports(const std::string &p_database_path) {

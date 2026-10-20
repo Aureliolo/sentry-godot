@@ -14,6 +14,8 @@ private:
 	Mutex _last_uuid_mutex;
 	Vector<sentry_uuid_t> user_attachments;
 
+	static String _database_path();
+
 public:
 	virtual void set_context(const String &p_key, const Dictionary &p_value) override;
 	virtual void remove_context(const String &p_key) override;
@@ -53,6 +55,11 @@ public:
 	virtual bool supports_before_send_feedback() const override { return true; }
 
 	virtual void set_trace(const String &p_trace_id, const String &p_parent_span_id) override;
+
+	virtual void set_user_consent(int p_consent) override;
+	virtual int get_user_consent() const override;
+	virtual Array get_pending_crash_reports() const override;
+	virtual int discard_pending_crash_reports() override;
 
 	virtual void init() override;
 	virtual void close() override;

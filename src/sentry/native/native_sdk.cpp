@@ -4,6 +4,7 @@
 #include "sentry/common_defs.h"
 #include "sentry/level.h"
 #include "sentry/logging/print.h"
+#include "sentry/native/crash_database.h"
 #include "sentry/native/native_breadcrumb.h"
 #include "sentry/native/native_event.h"
 #include "sentry/native/native_log.h"
@@ -22,6 +23,7 @@
 #include "sentry/util/screenshot.h"
 
 #include <cstdio>
+#include <godot_cpp/classes/dir_access.hpp>
 #include <godot_cpp/classes/engine.hpp>
 #include <godot_cpp/classes/file_access.hpp>
 #include <godot_cpp/classes/os.hpp>
@@ -430,8 +432,15 @@ void NativeSDK::init() {
 	sentry_options_t *options = sentry_options_new();
 
 	sentry_options_set_dsn(options, SENTRY_OPTIONS()->get_dsn().utf8().get_data());
-	String db_path = OS::get_singleton()->get_user_data_dir() + "/sentry";
-	sentry_options_set_database_path(options, db_path.utf8().get_data());
+	sentry_options_set_database_path(options, _database_path().utf8().get_data());
+	if (SENTRY_OPTIONS()->is_require_user_consent_enabled()) {
+		sentry_options_set_require_user_consent(options, 1);
+		// With a retry on, Crashpad pauses rather than skips a dump while consent is not given, so
+		// it stays on disk; the transport keeps envelopes the same way. Both go up once given.
+		sentry_options_set_http_retry(options, 1);
+		// A session update is a report of every start, which the player was not asked about.
+		sentry_options_set_auto_session_tracking(options, 0);
+	}
 	sentry_options_set_debug(options, SENTRY_OPTIONS()->is_debug_enabled());
 	sentry_options_set_release(options, SENTRY_OPTIONS()->get_release().utf8().get_data());
 	sentry_options_set_dist(options, SENTRY_OPTIONS()->get_dist().utf8().get_data());
@@ -496,7 +505,13 @@ void NativeSDK::init() {
 	sentry_options_set_before_send_feedback(options, _handle_before_send_feedback, NULL);
 	sentry_options_set_on_crash(options, _handle_on_crash, NULL);
 	sentry_options_set_logger(options, _log_native_message, NULL);
-	sentry_options_set_initial_scope(options, [](sentry_scope_t *p_scope, void *) { sentry_scope_set_user(p_scope, user_to_sentry_value(SentryUser::create_default())); }, NULL);
+	sentry_options_set_initial_scope(options, [](sentry_scope_t *p_scope, void *) {
+		Ref<SentryUser> user = SentryUser::create_default();
+		if (!user->is_empty()) {
+			sentry_scope_set_user(p_scope, user_to_sentry_value(user));
+		}
+	},
+			NULL);
 
 	const Callable &before_send_log = SENTRY_OPTIONS()->get_before_send_log();
 	if (before_send_log.is_valid()) {
@@ -536,6 +551,50 @@ void NativeSDK::close() {
 
 bool NativeSDK::is_enabled() const {
 	return sentry_is_enabled() != 0;
+}
+
+String NativeSDK::_database_path() {
+	return OS::get_singleton()->get_user_data_dir() + "/sentry";
+}
+
+void NativeSDK::set_user_consent(int p_consent) {
+	switch (p_consent) {
+		case SENTRY_USER_CONSENT_GIVEN:
+			sentry_user_consent_give();
+			break;
+		case SENTRY_USER_CONSENT_REVOKED:
+			sentry_user_consent_revoke();
+			break;
+		default:
+			sentry_user_consent_reset();
+			break;
+	}
+}
+
+int NativeSDK::get_user_consent() const {
+	return (int)sentry_user_consent_get();
+}
+
+Array NativeSDK::get_pending_crash_reports() const {
+	Array reports;
+	const String database = _database_path();
+	for (const std::string &id : crash_database::pending_report_ids(database.utf8().get_data())) {
+		const String report_id = String::utf8(id.c_str());
+		const String folder = database.path_join("attachments").path_join(report_id);
+		PackedStringArray attachments;
+		for (const String &file : DirAccess::get_files_at(folder)) {
+			attachments.append(folder.path_join(file));
+		}
+		Dictionary report;
+		report["id"] = report_id;
+		report["attachments"] = attachments;
+		reports.append(report);
+	}
+	return reports;
+}
+
+int NativeSDK::discard_pending_crash_reports() {
+	return crash_database::delete_pending_reports(_database_path().utf8().get_data());
 }
 
 NativeSDK::NativeSDK() {

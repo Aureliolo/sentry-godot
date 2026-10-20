@@ -27,6 +27,10 @@ void RuntimeConfig::load_file(const String &p_conf_path) {
 	conf->load(conf_path);
 
 	installation_id = _ensure_string(conf->get_value("main", "installation_id", ""), "");
+}
+
+void RuntimeConfig::ensure_installation_id() {
+	installation_id = _ensure_string(conf->get_value("main", "installation_id", ""), "");
 	if (installation_id.is_empty()) {
 		set_installation_id(sentry::uuid::make_uuid());
 	}

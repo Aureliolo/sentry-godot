@@ -10,6 +10,7 @@
 #include "sentry/sentry_span.h"
 #include "sentry/sentry_user.h"
 
+#include <godot_cpp/variant/array.hpp>
 #include <godot_cpp/variant/dictionary.hpp>
 #include <godot_cpp/variant/string.hpp>
 
@@ -63,6 +64,13 @@ public:
 	virtual bool supports_before_send_feedback() const = 0;
 
 	virtual void set_trace(const String &p_trace_id, const String &p_parent_span_id) = 0;
+
+	// Only the native SDK holds uploads back for consent; elsewhere these do nothing.
+	// Consent values are sentry-native's: -1 unknown, 0 revoked, 1 given.
+	virtual void set_user_consent(int /*p_consent*/) {}
+	virtual int get_user_consent() const { return -1; }
+	virtual Array get_pending_crash_reports() const { return Array(); }
+	virtual int discard_pending_crash_reports() { return 0; }
 
 	virtual void init() = 0;
 	virtual void close() = 0;

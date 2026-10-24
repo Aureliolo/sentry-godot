@@ -221,7 +221,9 @@ func test_device_context() -> void:
 
 
 # On PC, manufacturer, model and family should be populated in device context.
-func test_device_context_on_pc(_do_skip = OS.get_name() not in ["Windows", "Linux"]) -> void:
+# A Linux machine without SMBIOS tables (WSL, many containers and VMs) has none to report.
+func test_device_context_on_pc(_do_skip = OS.get_name() not in ["Windows", "Linux"] \
+		or (OS.get_name() == "Linux" and not FileAccess.file_exists("/sys/class/dmi/id/sys_vendor"))) -> void:
 	var json: String = await capture_event_and_get_json(SentrySDK.create_event())
 
 	assert_json(json).describe("Device context has manufacturer") \

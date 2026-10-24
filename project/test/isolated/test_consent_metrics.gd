@@ -52,13 +52,13 @@ func _serve() -> void:
 		var peer := _server.take_connection()
 		_peers.append(peer)
 		_pending[peer] = PackedByteArray()
-	for peer in _peers.duplicate():
+	for peer: StreamPeerTCP in _peers.duplicate():
 		peer.poll()
 		if peer.get_status() != StreamPeerTCP.STATUS_CONNECTED:
 			_peers.erase(peer)
 			_pending.erase(peer)
 			continue
-		var available := peer.get_available_bytes()
+		var available: int = peer.get_available_bytes()
 		if available > 0:
 			var buffer: PackedByteArray = _pending[peer]
 			buffer.append_array(peer.get_data(available)[1])
@@ -95,7 +95,7 @@ func _take_request(peer: StreamPeerTCP) -> void:
 
 func _metric_envelopes() -> int:
 	var count := 0
-	for envelope in _envelopes:
+	for envelope: String in _envelopes:
 		if envelope.contains(METRIC_ITEM):
 			count += 1
 	return count

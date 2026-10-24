@@ -116,6 +116,9 @@ cmake_gen += " -DCMAKE_INSTALL_LIBDIR=lib"
 
 if platform == "windows":
     cmake_gen += " -DSENTRY_BUILD_RUNTIMESTATIC=ON"
+    # No timestamps in the objects, libraries and crash handler, so a rebuild gives the same bytes.
+    for flags in ["C_FLAGS", "CXX_FLAGS", "EXE_LINKER_FLAGS", "SHARED_LINKER_FLAGS", "STATIC_LINKER_FLAGS"]:
+        cmake_gen += f" -DCMAKE_{flags}_INIT=/Brepro"
     if arch == "x86_32":
         cmake_arch = "-A Win32"
     elif arch == "x86_64":

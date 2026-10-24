@@ -85,6 +85,13 @@ env = SConscript("modules/godot-cpp/SConstruct", {"api_version": COMPATIBILITY_M
 platform = env["platform"]
 arch = env["arch"]
 
+if env.get("is_msvc", False):
+    # The same sources give the same bytes, so a release can be checked against a rebuild: no
+    # timestamps, and debug information kept in each object rather than in one compiler PDB that
+    # a parallel build fills in a different order each time.
+    env["CCFLAGS"] = ["/Z7" if flag == "/Zi" else flag for flag in env["CCFLAGS"] if flag != "/FS"]
+    env.Append(CCFLAGS=["/Brepro"], LINKFLAGS=["/Brepro"], ARFLAGS=["/Brepro"])
+
 # Register tools
 env.Tool("copy")
 env.Tool("plist")

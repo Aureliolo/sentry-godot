@@ -1,5 +1,7 @@
 #!/usr/bin/env python
+import hashlib
 import os
+import re
 import subprocess
 import sys
 from enum import Enum
@@ -245,6 +247,22 @@ if env["tests"]:
 
 # Generate documentation data.
 if env["target"] in ["editor", "template_debug"]:
+    if "GodotCPPDocData" in env["BUILDERS"]:
+        from doc_source_generator import generate_doc_source
+
+        def generate_reproducible_doc_source(target, source, env):
+            # godot-cpp names the class reference by Python's hash(), which is salted for every
+            # process, so each build put a different number into the library. The engine only
+            # checks that the name is set, so a digest of the generated data serves as well.
+            path = str(target[0])
+            generate_doc_source(path, source)
+            with open(path, encoding="utf-8") as f:
+                text = re.sub(r'(_doc_data_hash = ")[^"]*"', r'\1"', f.read())
+            digest = hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(text.replace('_doc_data_hash = ""', f'_doc_data_hash = "{digest}"', 1))
+
+        env["BUILDERS"]["GodotCPPDocData"] = Builder(action=generate_reproducible_doc_source)
     try:
         doc_data = env.GodotCPPDocData(
             "src/gen/doc_data.gen.cpp", source=Glob("doc_classes/*.xml"))

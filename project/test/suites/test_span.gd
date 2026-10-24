@@ -543,3 +543,45 @@ func test_ended_previous_span_is_not_a_tracing_ancestor() -> void:
 	child.end()
 	root.end()
 	assert_object(SentrySDK.get_active_span()).is_null()
+
+
+## Passing false is the same as omitting the parent: the active span is inherited, while null still starts a root.
+func test_false_parent_inherits_the_active_span() -> void:
+	var root := SentrySDK.start_span("test.false_root", {}, null, false)
+	var active := SentrySDK.start_span("test.false_active", {}, root)
+	root.end()
+
+	var inherited := SentrySDK.start_span("test.false_inherited", {}, false, false)
+	assert_array(inherited.get_trace_headers()) \
+		.override_failure_message("false must inherit the active span, whose ended ancestor refuses a child") \
+		.is_empty()
+	var fresh_root := SentrySDK.start_span("test.null_root", {}, null, false)
+	assert_array(fresh_root.get_trace_headers()) \
+		.override_failure_message("null must start a new root span whatever is active") \
+		.is_not_empty()
+	fresh_root.end()
+	inherited.end()
+	active.end()
+	assert_object(SentrySDK.get_active_span()).is_null()
+
+
+## A parent that is neither a span nor null yields a no-op span.
+func test_invalid_parent_yields_a_noop_span() -> void:
+	var span := SentrySDK.start_span("test.invalid_parent", {}, "not a span", false)
+	assert_object(span).is_not_null()
+	assert_array(span.get_trace_headers()).is_empty()
+	span.end()
+
+
+## No method of the SDK keeps an Object among its default values: Godot 4.8 destroys those after
+## ObjectDB is gone, which crashes every exit.
+func test_bound_defaults_hold_no_object() -> void:
+	var held: PackedStringArray = []
+	for cls in ClassDB.get_class_list():
+		if not cls.begins_with("Sentry") or ClassDB.class_get_api_type(cls) != ClassDB.API_EXTENSION:
+			continue
+		for method in ClassDB.class_get_method_list(cls, true):
+			for value in method["default_args"]:
+				if typeof(value) == TYPE_OBJECT:
+					held.append("%s.%s" % [cls, method["name"]])
+	assert_array(held).is_empty()

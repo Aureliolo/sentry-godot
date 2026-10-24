@@ -264,7 +264,7 @@
 			<return type="SentrySpan" />
 			<param index="0" name="name" type="String" />
 			<param index="1" name="attributes" type="Dictionary" default="{}" />
-			<param index="2" name="parent_span" type="SentrySpan" default="Object(SentrySpan,&quot;script&quot;:null) " />
+			<param index="2" name="parent_span" type="Variant" default="false" />
 			<param index="3" name="active" type="bool" default="true" />
 			<description>
 				Starts a span named [param name] and returns it. Use the returned [SentrySpan] to attach attributes, set a status, and call [method SentrySpan.end] when the measured operation finishes. If [param name] is empty, the SDK prints an error and returns a no-op span.
@@ -280,7 +280,7 @@
 				span.set_status(SentrySpan.SPAN_STATUS_OK)
 				span.end()
 				[/codeblock]
-				When [param parent_span] is omitted, the new span becomes a child of [method SentrySDK.get_active_span] if one exists; otherwise, it starts a new root span. Pass [code]null[/code] to force a new root span, or pass a [SentrySpan] to create a child of that span even when another span is active. If the chosen parent or any of its ancestors has ended, the SDK prints an error and returns a no-op span.
+				When [param parent_span] is omitted (or [code]false[/code], its default), the new span becomes a child of [method SentrySDK.get_active_span] if one exists; otherwise, it starts a new root span. Pass [code]null[/code] to force a new root span, or pass a [SentrySpan] to create a child of that span even when another span is active. Any other value prints an error and returns a no-op span, as does a chosen parent that has ended or has an ancestor that has ended.
 				The [param attributes] dictionary is added to the span when it starts. The special [code]sentry.op[/code] attribute sets the operation the span is grouped under in Sentry. The SDK skips an entry with an empty key and prints an error.
 				[b]Note:[/b] The SDK sends spans only if [member SentryOptions.traces_sample_rate] is set above its default of [code]0.0[/code]. The API works either way: telemetry captured during an active span carries its trace context even when the span is not sent.
 				[b]Note:[/b] The child span keeps its parent and ancestors alive until it is freed.

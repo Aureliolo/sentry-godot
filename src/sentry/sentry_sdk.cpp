@@ -184,12 +184,23 @@ Variant SentrySDK::with_scope(const Callable &p_callable) {
 	return result;
 }
 
-Ref<SentrySpan> SentrySDK::start_span(const String &p_name, const Dictionary &p_attributes, const Ref<SentrySpan> &p_parent_span, bool p_active) {
+Ref<SentrySpan> SentrySDK::start_span(const String &p_name, const Dictionary &p_attributes, const Variant &p_parent_span, bool p_active) {
 	ERR_FAIL_COND_V_MSG(p_name.is_empty(), SentrySpan::create_noop(), "Sentry: Can't start a span with an empty name.");
 
-	// The unassigned sentinel means "inherit the active span", while an explicit null forces a segment (new root-level span).
-	const bool parent_given = p_parent_span != SentrySpan::unassigned();
-	Ref<SentrySpan> parent = parent_given ? p_parent_span : get_active_span();
+	// Omitted means "inherit the active span", while an explicit null forces a segment (new root-level span).
+	const Variant::Type parent_type = p_parent_span.get_type();
+	const bool parent_given = !(parent_type == Variant::BOOL && bool(p_parent_span) == INHERIT_ACTIVE_SPAN);
+	Ref<SentrySpan> parent;
+	if (parent_given) {
+		ERR_FAIL_COND_V_MSG(parent_type != Variant::NIL && parent_type != Variant::OBJECT, SentrySpan::create_noop(),
+				"Sentry: Can't start a span: parent_span must be a SentrySpan or null.");
+		Object *parent_object = p_parent_span;
+		parent = Ref<SentrySpan>(Object::cast_to<SentrySpan>(parent_object));
+		ERR_FAIL_COND_V_MSG(parent_object != nullptr && parent.is_null(), SentrySpan::create_noop(),
+				"Sentry: Can't start a span: parent_span must be a SentrySpan or null.");
+	} else {
+		parent = get_active_span();
+	}
 
 	Ref<SentrySpan> span;
 	if (parent.is_valid()) {
@@ -735,7 +746,7 @@ void SentrySDK::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_current_scope"), &SentrySDK::get_current_scope);
 	ClassDB::bind_method(D_METHOD("with_scope", "callable"), &SentrySDK::with_scope);
 
-	ClassDB::bind_method(D_METHOD("start_span", "name", "attributes", "parent_span", "active"), &SentrySDK::start_span, DEFVAL(Dictionary()), DEFVAL(SentrySpan::unassigned()), DEFVAL(true));
+	ClassDB::bind_method(D_METHOD("start_span", "name", "attributes", "parent_span", "active"), &SentrySDK::start_span, DEFVAL(Dictionary()), DEFVAL(INHERIT_ACTIVE_SPAN), DEFVAL(true));
 	ClassDB::bind_method(D_METHOD("with_span", "name", "callable"), &SentrySDK::with_span);
 	ClassDB::bind_method(D_METHOD("get_active_span"), &SentrySDK::get_active_span);
 

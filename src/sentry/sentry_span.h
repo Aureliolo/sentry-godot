@@ -44,9 +44,6 @@ public:
 	// Returns a no-op span that does nothing.
 	static Ref<SentrySpan> create_noop();
 
-	// Returns a sentinel value that indicates an unassigned span.
-	static Ref<SentrySpan> unassigned();
-
 	void set_attribute(const String &p_key, const Variant &p_value);
 	void set_attributes(const Dictionary &p_attributes);
 

@@ -165,8 +165,12 @@ public:
 
 	// * Spans
 
+	// p_parent_span is INHERIT_ACTIVE_SPAN, null for a new root span, or the parent SentrySpan.
+	// Its default is no Object: Godot 4.8 keeps a bound method's default values until after ObjectDB is
+	// torn down, so an Object default is destroyed against a freed ObjectDB and crashes every exit.
+	static constexpr bool INHERIT_ACTIVE_SPAN = false;
 	Ref<SentrySpan> start_span(const String &p_name, const Dictionary &p_attributes = {},
-			const Ref<SentrySpan> &p_parent_span = SentrySpan::unassigned(), bool p_active = true);
+			const Variant &p_parent_span = INHERIT_ACTIVE_SPAN, bool p_active = true);
 	Variant with_span(const String &p_name, const Callable &p_callable);
 	Ref<SentrySpan> get_active_span() const;
 

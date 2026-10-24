@@ -1,12 +1,10 @@
 #include "sentry_span.h"
 
 #include "sentry/disabled/disabled_span.h"
-#include "sentry/engine_lifecycle/engine_lifecycle.h"
 #include "sentry_sdk.h" // Needed for VariantCaster<SentrySDK::Level>
 
 #include <godot_cpp/classes/reg_ex.hpp>
 #include <godot_cpp/classes/reg_ex_match.hpp>
-#include <godot_cpp/variant/callable_method_pointer.hpp>
 
 #define WRONG_THREAD_MSG \
 	"Sentry: Span methods must be called on the thread that created the span."
@@ -38,12 +36,6 @@ bool _is_propagation_target(const String &p_url) {
 	return false;
 }
 
-Ref<sentry::SentrySpan> _unassigned_sentinel;
-
-void _release_unassigned_sentinel() {
-	_unassigned_sentinel.unref();
-}
-
 } // unnamed namespace
 
 namespace sentry {
@@ -51,19 +43,6 @@ namespace sentry {
 Ref<SentrySpan> SentrySpan::create_noop() {
 	SentrySpanImpl *impl = memnew(DisabledSpan);
 	return Ref<SentrySpan>(memnew(SentrySpan(impl)));
-}
-
-Ref<SentrySpan> SentrySpan::unassigned() {
-	// FYI: Internal SDK is not initialized yet when this is first called, which
-	// happens while binding methods, since it is the default value for start_span().
-	// That first call is also what makes the unsynchronized init safe: it happens on
-	// the main thread during class registration, before any thread can reach start_span().
-	if (_unassigned_sentinel.is_null()) {
-		_unassigned_sentinel = create_noop();
-		// Holding it until process exit would outlive ObjectDB and crash on teardown.
-		engine_lifecycle::add_module_termination_callback(callable_mp_static(&_release_unassigned_sentinel));
-	}
-	return _unassigned_sentinel;
 }
 
 void SentrySpan::set_attribute(const String &p_key, const Variant &p_value) {
@@ -133,8 +112,8 @@ Ref<SentrySpan> SentrySpan::start_child(const String &p_name, const Dictionary &
 }
 
 SentrySpan::SentrySpan() {
-	// Inert by default: the only paths here are unassigned() and a accidental
-	// instantiation by the engine or user, neither of which should start a live span.
+	// Inert by default: the only path here is an accidental instantiation by the
+	// engine or user, which should not start a live span.
 	_impl = memnew(DisabledSpan);
 }
 

@@ -45,16 +45,37 @@ def project(where: Path, settings: str, addon: Path) -> Path:
     return where
 
 
+def quiet_start() -> dict:
+    """What keeps a run off the desktop and out of the way of whoever works at it.
+
+    Godot's OS.alert() is a message box on Windows that no flag or error mode suppresses; the project
+    this check writes reaches none of the engine's alerts (its path exists and it runs a script that
+    extends SceneTree), and the error mode keeps a crash from raising Windows' own dialog.
+    """
+    if sys.platform == "win32":
+        import ctypes
+
+        no_dialogs = 0x0001 | 0x0002 | 0x8000  # critical errors, fault and open-file boxes
+        ctypes.windll.kernel32.SetErrorMode(no_dialogs)
+        flags = subprocess.CREATE_NO_WINDOW | subprocess.BELOW_NORMAL_PRIORITY_CLASS
+        return {"creationflags": flags}
+    return {"preexec_fn": lambda: os.nice(10)}
+
+
 def run(godot: str, where: Path) -> tuple[int, str]:
     # The user folder, where an initialised SDK keeps what it could not send, stays in the scratch folder.
     home = where.parent / "user"
     env = os.environ | {"APPDATA": str(home), "XDG_DATA_HOME": str(home)}
+    # With no display to reach, no alert program on Linux can open a window.
+    for name in ("DISPLAY", "WAYLAND_DISPLAY"):
+        env.pop(name, None)
     command = [godot, "--headless", "--verbose", "--audio-driver", "Dummy", "--path", str(where)]
     done = subprocess.run(
         [*command, "-s", "res://quit.gd"],
         check=False,
         stdin=subprocess.DEVNULL,
         env=env,
+        **quiet_start(),
         capture_output=True,
         text=True,
         encoding="utf-8",

@@ -119,6 +119,12 @@ if platform == "windows":
     # No timestamps in the objects, libraries and crash handler, so a rebuild gives the same bytes.
     for flags in ["C_FLAGS", "CXX_FLAGS", "EXE_LINKER_FLAGS", "SHARED_LINKER_FLAGS", "STATIC_LINKER_FLAGS"]:
         cmake_gen += f" -DCMAKE_{flags}_INIT=/Brepro"
+    # The crash handler and its WER module are linked by lld-link too, as the SDK is, so their
+    # PDBs rebuild byte for byte; the Visual Studio generator only takes it as MSBuild's link tool.
+    lld_link = env.get("SENTRY_LLD_LINK")
+    if lld_link:
+        lld_dir, lld_exe = os.path.split(lld_link)
+        cmake_gen += f' "-DCMAKE_VS_GLOBALS=LinkToolExe={lld_exe};LinkToolPath={lld_dir}"'
     if arch == "x86_32":
         cmake_arch = "-A Win32"
     elif arch == "x86_64":

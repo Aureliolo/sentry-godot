@@ -93,6 +93,17 @@ if env.get("is_msvc", False):
     # a parallel build fills in a different order each time.
     env["CCFLAGS"] = ["/Z7" if flag == "/Zi" else flag for flag in env["CCFLAGS"] if flag != "/FS"]
     env.Append(CCFLAGS=["/Brepro"], LINKFLAGS=["/Brepro"], ARFLAGS=["/Brepro"])
+    # link.exe lays a PDB's streams out in a different order on every link, so only LLVM's
+    # lld-link (Visual Studio's "C++ Clang tools") gives symbols that rebuild byte for byte.
+    lld_link = env.WhereIs("lld-link") or os.path.join(
+        os.environ.get("VCINSTALLDIR", ""), "Tools", "Llvm", "x64", "bin", "lld-link.exe")
+    if not os.path.isfile(lld_link):
+        print("ERROR: lld-link not found: install Visual Studio's C++ Clang tools "
+              "(Microsoft.VisualStudio.Component.VC.Llvm.Clang) and build from its developer prompt.")
+        Exit(1)
+    env.PrependENVPath("PATH", os.path.dirname(lld_link))
+    env["LINK"] = "lld-link"
+    env["SENTRY_LLD_LINK"] = lld_link
 
 # Register tools
 env.Tool("copy")

@@ -61,6 +61,7 @@ public:
 	virtual Array get_pending_crash_reports() const override;
 	virtual int discard_pending_crash_reports() override;
 	virtual bool discard_pending_crash_report(const String &p_id) override;
+	virtual String dump_without_crash(const Dictionary &p_tags) override;
 
 	virtual void init() override;
 	virtual void close() override;

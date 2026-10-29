@@ -131,6 +131,13 @@
 				Deletes every crash report the crash handler holds on disk waiting for consent, with its attachments, and returns how many were deleted. Native platforms only.
 			</description>
 		</method>
+		<method name="dump_without_crash">
+			<return type="String" />
+			<param index="0" name="tags" type="Dictionary" default="{}" />
+			<description>
+				Has the crash handler write a minidump of every thread of the running process, which goes on afterwards, as a game's watch does when its main loop has stopped ticking: each thread's stack shows where it stands. Safe to call from any thread; the calling thread waits while the handler suspends the others and records them, and its own stack is the report's exception thread. The report waits on disk as a crash's does, listed by [method SentrySDK.get_pending_crash_reports], and goes up as a crash's would: uploads are held while it is written, and consent given before the call is given again after it, so the handler takes up a whole report. Its event is a fresh one, with its own event id (the report's id, so it never collides with a later crash of the same run), level error, the scope as it stands and [param tags] over the scope's tags. Returns the report's id, or an empty string where the SDK is not running or the crash handler wrote nothing. Windows and Linux only; elsewhere it returns an empty string.
+			</description>
+		</method>
 		<method name="reset_user_consent">
 			<return type="void" />
 			<description>

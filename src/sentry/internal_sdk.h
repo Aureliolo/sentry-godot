@@ -72,6 +72,8 @@ public:
 	virtual Array get_pending_crash_reports() const { return Array(); }
 	virtual int discard_pending_crash_reports() { return 0; }
 	virtual bool discard_pending_crash_report(const String & /*p_id*/) { return false; }
+	// Only the native SDK's crash handler writes a dump of a process that goes on.
+	virtual String dump_without_crash(const Dictionary & /*p_tags*/) { return String(); }
 
 	virtual void init() = 0;
 	virtual void close() = 0;

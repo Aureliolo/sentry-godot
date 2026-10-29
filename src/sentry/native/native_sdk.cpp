@@ -5,6 +5,7 @@
 #include "sentry/level.h"
 #include "sentry/logging/print.h"
 #include "sentry/native/crash_database.h"
+#include "sentry/native/crash_dump.h"
 #include "sentry/native/native_breadcrumb.h"
 #include "sentry/native/native_event.h"
 #include "sentry/native/native_log.h"
@@ -601,6 +602,20 @@ int NativeSDK::discard_pending_crash_reports() {
 
 bool NativeSDK::discard_pending_crash_report(const String &p_id) {
 	return crash_database::delete_pending_report(_database_path().utf8().get_data(), p_id.utf8().get_data());
+}
+
+String NativeSDK::dump_without_crash(const Dictionary &p_tags) {
+	if (!is_enabled()) {
+		return String();
+	}
+	std::map<std::string, std::string> tags;
+	const Array keys = p_tags.keys();
+	for (int i = 0; i < keys.size(); i++) {
+		const String key = keys[i];
+		const String value = p_tags[keys[i]];
+		tags[key.utf8().get_data()] = value.utf8().get_data();
+	}
+	return String::utf8(crash_dump::write(_database_path().utf8().get_data(), tags).c_str());
 }
 
 NativeSDK::NativeSDK() {

@@ -2,6 +2,7 @@
 ## Purpose: Build sentry-native static library.
 
 import os
+import subprocess
 
 
 # *** Prologue: Initialization
@@ -156,8 +157,10 @@ elif platform == "macos":
     if macos_deployment_target != "default":
         cmake_gen += f' -DCMAKE_OSX_DEPLOYMENT_TARGET=\"{macos_deployment_target}\"'
 
-cmake_sentry = "cmake --build build --target sentry --parallel --config RelWithDebInfo"
-cmake_crashpad = "cmake --build build --target crashpad_handler --parallel --config RelWithDebInfo"
+# A bare --parallel is MSBuild's /m and make's unlimited -j, whatever -j scons was given.
+jobs = GetOption("num_jobs")
+cmake_sentry = f"cmake --build build --target sentry --parallel {jobs} --config RelWithDebInfo"
+cmake_crashpad = f"cmake --build build --target crashpad_handler --parallel {jobs} --config RelWithDebInfo"
 cmake_install = "cmake --install build --prefix install --config RelWithDebInfo"
 
 
@@ -165,7 +168,30 @@ cmake_install = "cmake --install build --prefix install --config RelWithDebInfo"
 
 sentry_native_path = Dir('sentry-native').abspath
 
+# The fork's fixes to code sentry-native pins in submodules of its own, which the fork cannot pin,
+# go onto that checkout before CMake runs: patches/<name>/*.patch onto external/<name>.
+patches = sorted(Glob("patches/*/*.patch"), key=str)
+
+
+def apply_patches(target, source, env):
+    for patch in patches:
+        tree = Dir("sentry-native/external").Dir(patch.dir.name).abspath
+
+        def git_apply(*flags):
+            return subprocess.run(["git", "-C", tree, "apply", *flags, patch.abspath],
+                                  capture_output=True, text=True)
+
+        if git_apply("--reverse", "--check").returncode == 0:
+            continue
+        applied = git_apply()
+        if applied.returncode != 0:
+            print(f"ERROR: {patch} does not apply to {tree}:\n{applied.stderr}")
+            return 1
+    return 0
+
+
 actions = [
+        Action(apply_patches, "Applying the fork's patches to sentry-native's submodules"),
         f"cd {sentry_native_path} && {cmake_gen}",
         f"cd {sentry_native_path} && {cmake_sentry}",
         f"cd {sentry_native_path} && {cmake_crashpad}",
@@ -188,7 +214,7 @@ env_cmake = Environment(ENV = os.environ)
 
 sentry_native = env_cmake.Command(
     target=build_targets,
-    source=[Dir("sentry-native/src")],
+    source=[Dir("sentry-native/src")] + patches,
     action=actions
 )
 

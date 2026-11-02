@@ -1,0 +1,708 @@
+diff --git a/client/crashpad_client_linux.cc b/client/crashpad_client_linux.cc
+index 04b35fd1..a5bd6c91 100644
+--- a/client/crashpad_client_linux.cc
++++ b/client/crashpad_client_linux.cc
+@@ -25,6 +25,7 @@
+ #include <sys/prctl.h>
+ #include <sys/socket.h>
+ #include <sys/syscall.h>
++#include <sys/time.h>
+ #include <sys/types.h>
+ #include <sys/wait.h>
+ #include <unistd.h>
+@@ -55,6 +56,28 @@ namespace crashpad {
+
+ namespace {
+
++// How long the handler has to answer its start, as long as the Windows client
++// gives it. Without a bound, a handler stopped as it started held its client in
++// StartHandler() for good.
++constexpr time_t kSecondsForHandlerStart = 60;
++
++// How long a message to the handler may wait for room in the socket, which a
++// stopped handler never drains: as long as this client waits for the handler
++// to answer a crash.
++constexpr time_t kSecondsForHandlerSend = 5;
++
++bool BoundWaitsOnHandler(int sock) {
++  const timeval receive = {kSecondsForHandlerStart, 0};
++  const timeval send = {kSecondsForHandlerSend, 0};
++  if (setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &receive, sizeof(receive)) !=
++          0 ||
++      setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &send, sizeof(send)) != 0) {
++    PLOG(ERROR) << "setsockopt";
++    return false;
++  }
++  return true;
++}
++
+ std::string FormatArgumentInt(const std::string& name, int value) {
+   return base::StringPrintf("--%s=%d", name.c_str(), value);
+ }
+@@ -392,6 +415,9 @@ class RequestCrashDumpHandler : public SignalHandler {
+   bool Initialize(ScopedFileHandle sock,
+                   pid_t pid,
+                   const std::set<int>* unhandled_signals) {
++    if (!BoundWaitsOnHandler(sock.get())) {
++      return false;
++    }
+     ExceptionHandlerClient client(sock.get(), true);
+     if (pid < 0) {
+       ucred creds;
+diff --git a/client/crashpad_client_win.cc b/client/crashpad_client_win.cc
+index 163c338c..fc6eec23 100644
+--- a/client/crashpad_client_win.cc
++++ b/client/crashpad_client_win.cc
+@@ -22,6 +22,7 @@
+ #include <stdint.h>
+ #include <string.h>
+
++#include <atomic>
+ #include <memory>
+ #include <string_view>
+
+@@ -70,6 +71,38 @@ CrashpadClient::FirstChanceHandler first_chance_handler_ = nullptr;
+ // Guards multiple simultaneous calls to DumpWithoutCrash() in the client.
+ base::Lock* g_non_crash_dump_lock = nullptr;
+
++// How long the handler has to start, to answer a registration and to write a
++// dump, before the client gives up on it and carries on or crashes without it.
++constexpr DWORD kMillisecondsUntilTerminate = 60 * 1000;
++
++// How long the handler has to answer a request the client makes while it runs:
++// an attachment write, which the scope and breadcrumbs go through, or a retry.
++// It answers these at once now that they no longer queue behind its disk
++// writes, and the Linux client gives it this long to answer a crash.
++constexpr DWORD kMillisecondsForHandlerAnswer = 5 * 1000;
++
++// Set once a request went unanswered in time, so that the next ones do not each
++// wait for a pipe instance the stalled handler holds, and cleared by the next
++// answered one. Without it every scope write would wait out the bound again.
++std::atomic<bool> g_handler_unanswered{false};
++
++bool SendRunningRequest(const std::wstring& pipe_name,
++                        const ClientToServerMessage& message,
++                        base::span<const uint8_t> head,
++                        base::span<const uint8_t> tail) {
++  ServerToClientMessage response = {};
++  const bool answered =
++      SendPayloadToCrashHandlerServer(pipe_name,
++                                      message,
++                                      head,
++                                      tail,
++                                      &response,
++                                      kMillisecondsForHandlerAnswer,
++                                      !g_handler_unanswered.load());
++  g_handler_unanswered.store(!answered);
++  return answered;
++}
++
+ class CrashDumpAutoReleaser {
+  public:
+   ~CrashDumpAutoReleaser() {
+@@ -146,17 +179,24 @@ LONG WINAPI UnhandledExceptionHandler(EXCEPTION_POINTERS* exception_pointers) {
+     return status;
+ #endif
+
++  // A crash the handler cannot take goes on to the system's own handling, so
++  // that Windows Error Reporting and the exit code still show it. Terminating
++  // here instead would end the process with a code that hides the crash.
+   if (BlockUntilHandlerStartedOrFailed() == StartupState::kFailed) {
+-    // If we know for certain that the handler has failed to start, then abort
+-    // here, rather than trying to signal to a handler that will never arrive,
+-    // and then sleeping unnecessarily.
+-    LOG(ERROR) << "crash server failed to launch, self-terminating";
+-    SafeTerminateProcess(GetCurrentProcess(), kTerminationCodeCrashNoDump);
++    LOG(ERROR) << "crash server failed to launch";
+     return EXCEPTION_CONTINUE_SEARCH;
+   }
+
+   // Otherwise, we know the handler startup has succeeded, and we can continue.
+
++  // Set once the handler has not answered this crash in time. The same crash
++  // can come back through this filter (the heap corruption handler hands it
++  // on), and must then go on to the system rather than sleep for good below.
++  static std::atomic<bool> passed_to_system{false};
++  if (passed_to_system.load()) {
++    return EXCEPTION_CONTINUE_SEARCH;
++  }
++
+   // Tracks whether a thread has already entered UnhandledExceptionHandler.
+   static std::atomic have_crashed{0};
+
+@@ -197,18 +237,12 @@ LONG WINAPI UnhandledExceptionHandler(EXCEPTION_POINTERS* exception_pointers) {
+   // when it's complete.
+   SetEvent(g_signal_exception);
+
+-  // Time to wait for the handler to create a dump.
+-  constexpr DWORD kMillisecondsUntilTerminate = 60 * 1000;
+-
+-  // Sleep for a while to allow it to process us. Eventually, we terminate
+-  // ourselves in case the crash server is gone, so that we don't leave zombies
+-  // around. This would ideally never happen.
++  // Sleep for a while to allow it to process us. A handler that is gone or
++  // stalled never does, and the crash then goes on to the system.
+   Sleep(kMillisecondsUntilTerminate);
+
+-  LOG(ERROR) << "crash server did not respond, self-terminating";
+-
+-  SafeTerminateProcess(GetCurrentProcess(), kTerminationCodeCrashNoDump);
+-
++  LOG(ERROR) << "crash server did not respond";
++  passed_to_system.store(true);
+   return EXCEPTION_CONTINUE_SEARCH;
+ }
+
+@@ -629,11 +663,13 @@ bool StartHandlerProcess(
+   // the connection loop will not detect that it will never be serviced.
+   data->ipc_pipe_handle.reset();
+
+-  // Confirm that the server is waiting for connections before continuing.
++  // Confirm that the server is waiting for connections before continuing. A
++  // handler that never answers fails the start, and the client runs without it.
+   ClientToServerMessage message = {};
+   message.type = ClientToServerMessage::kPing;
+   ServerToClientMessage response = {};
+-  if (!SendToCrashHandlerServer(data->ipc_pipe, message, &response)) {
++  if (!SendToCrashHandlerServer(
++          data->ipc_pipe, message, &response, kMillisecondsUntilTerminate)) {
+     return false;
+   }
+
+@@ -816,7 +852,8 @@ bool CrashpadClient::SetHandlerIPCPipe(const std::wstring& ipc_pipe) {
+
+   ServerToClientMessage response = {};
+
+-  if (!SendToCrashHandlerServer(ipc_pipe_, message, &response)) {
++  if (!SendToCrashHandlerServer(
++          ipc_pipe_, message, &response, kMillisecondsUntilTerminate)) {
+     return false;
+   }
+
+@@ -932,12 +969,17 @@ void CrashpadClient::DumpWithoutCrash(const CONTEXT& context) {
+   g_non_crash_exception_information.exception_pointers =
+       FromPointerCast<WinVMAddress>(&exception_pointers);
+
++  // A handler that stalled past an earlier dump may have finished it since,
++  // and that completion must not be taken for this one.
++  WaitForSingleObject(g_wer_registration.dump_completed, 0);
++
+   g_wer_registration.in_dump_without_crashing = true;
+   bool set_event_result = !!SetEvent(g_wer_registration.dump_without_crashing);
+   PLOG_IF(ERROR, !set_event_result) << "SetEvent";
+
+-  DWORD wfso_result =
+-      WaitForSingleObject(g_wer_registration.dump_completed, INFINITE);
++  // A handler that never answers leaves the caller without a dump, not held.
++  DWORD wfso_result = WaitForSingleObject(g_wer_registration.dump_completed,
++                                          kMillisecondsUntilTerminate);
+   PLOG_IF(ERROR, wfso_result != WAIT_OBJECT_0) << "WaitForSingleObject";
+   g_wer_registration.in_dump_without_crashing = false;
+ }
+@@ -955,6 +997,10 @@ void CrashpadClient::DumpAndCrash(EXCEPTION_POINTERS* exception_pointers) {
+   // UnhandledExceptionHandler() necessarily does that.
+
+   UnhandledExceptionHandler(exception_pointers);
++
++  // It returns only when the handler did not take the crash, and this crash
++  // has no system handling to go on to.
++  SafeTerminateProcess(GetCurrentProcess(), kTerminationCodeCrashNoDump);
+ }
+
+ // static
+@@ -1228,14 +1274,12 @@ void CrashpadClient::AddAttachment(const base::FilePath& attachment) {
+   message.attachment_v2.path_length_bytes =
+       static_cast<uint32_t>(path_length_bytes);
+
+-  ServerToClientMessage response = {};
+-  SendPayloadToCrashHandlerServer(ipc_pipe_,
+-                                  message,
+-                                  base::as_bytes(base::make_span(
+-                                      attachment.value().c_str(),
+-                                      path_length_bytes / sizeof(wchar_t))),
+-                                  {},
+-                                  &response);
++  SendRunningRequest(ipc_pipe_,
++                     message,
++                     base::as_bytes(base::make_span(
++                         attachment.value().c_str(),
++                         path_length_bytes / sizeof(wchar_t))),
++                     {});
+ }
+
+ bool CrashpadClient::WriteAttachment(const base::FilePath& attachment,
+@@ -1256,15 +1300,12 @@ bool CrashpadClient::WriteAttachment(const base::FilePath& attachment,
+   message.attachment_write.payload_length_bytes =
+       static_cast<uint32_t>(data.size());
+
+-  ServerToClientMessage response = {};
+-  return SendPayloadToCrashHandlerServer(ipc_pipe_,
+-                                         message,
+-                                         base::as_bytes(base::make_span(
+-                                             attachment.value().c_str(),
+-                                             path_length_bytes
+-                                                 / sizeof(wchar_t))),
+-                                         data,
+-                                         &response);
++  return SendRunningRequest(ipc_pipe_,
++                            message,
++                            base::as_bytes(base::make_span(
++                                attachment.value().c_str(),
++                                path_length_bytes / sizeof(wchar_t))),
++                            data);
+ }
+
+ bool CrashpadClient::AppendAttachment(const base::FilePath& attachment,
+@@ -1285,15 +1326,12 @@ bool CrashpadClient::AppendAttachment(const base::FilePath& attachment,
+   message.attachment_write.payload_length_bytes =
+       static_cast<uint32_t>(data.size());
+
+-  ServerToClientMessage response = {};
+-  return SendPayloadToCrashHandlerServer(ipc_pipe_,
+-                                         message,
+-                                         base::as_bytes(base::make_span(
+-                                             attachment.value().c_str(),
+-                                             path_length_bytes
+-                                                 / sizeof(wchar_t))),
+-                                         data,
+-                                         &response);
++  return SendRunningRequest(ipc_pipe_,
++                            message,
++                            base::as_bytes(base::make_span(
++                                attachment.value().c_str(),
++                                path_length_bytes / sizeof(wchar_t))),
++                            data);
+ }
+
+ void CrashpadClient::RemoveAttachment(const base::FilePath& attachment) {
+@@ -1309,21 +1347,18 @@ void CrashpadClient::RemoveAttachment(const base::FilePath& attachment) {
+   message.attachment_v2.path_length_bytes =
+       static_cast<uint32_t>(path_length_bytes);
+
+-  ServerToClientMessage response = {};
+-  SendPayloadToCrashHandlerServer(ipc_pipe_,
+-                                  message,
+-                                  base::as_bytes(base::make_span(
+-                                      attachment.value().c_str(),
+-                                      path_length_bytes / sizeof(wchar_t))),
+-                                  {},
+-                                  &response);
++  SendRunningRequest(ipc_pipe_,
++                     message,
++                     base::as_bytes(base::make_span(
++                         attachment.value().c_str(),
++                         path_length_bytes / sizeof(wchar_t))),
++                     {});
+ }
+
+ void CrashpadClient::RequestRetry() {
+   ClientToServerMessage message = {};
+   message.type = ClientToServerMessage::kRequestRetry;
+-  ServerToClientMessage response = {};
+-  SendToCrashHandlerServer(ipc_pipe_, message, &response);
++  SendRunningRequest(ipc_pipe_, message, {}, {});
+ }
+
+ }  // namespace crashpad
+diff --git a/util/win/registration_protocol_win.cc b/util/win/registration_protocol_win.cc
+index 107ec137..307cbac3 100644
+--- a/util/win/registration_protocol_win.cc
++++ b/util/win/registration_protocol_win.cc
+@@ -20,6 +20,7 @@
+ #include <stddef.h>
+
+ #include <iterator>
++#include <utility>
+
+ #include "base/check.h"
+ #include "base/logging.h"
+@@ -73,138 +74,239 @@ void* GetSecurityDescriptorWithUser(const wchar_t* sddl_string, size_t* size) {
+
+ }  // namespace
+
+-bool SendToCrashHandlerServer(const std::wstring& pipe_name,
+-                              const ClientToServerMessage& message,
+-                              ServerToClientMessage* response) {
+-  // Retry CreateFile() in a loop. If the handler isn’t actively waiting in
+-  // ConnectNamedPipe() on a pipe instance because it’s busy doing something
+-  // else, CreateFile() will fail with ERROR_PIPE_BUSY. WaitNamedPipe() waits
+-  // until a pipe instance is ready, but there’s no way to wait for this
+-  // condition and atomically open the client side of the pipe in a single
+-  // operation. CallNamedPipe() implements similar retry logic to this, also in
+-  // user-mode code.
+-  //
+-  // This loop is only intended to retry on ERROR_PIPE_BUSY. Notably, if the
+-  // handler is so lazy that it hasn’t even called CreateNamedPipe() yet,
+-  // CreateFile() will fail with ERROR_FILE_NOT_FOUND, and this function is
+-  // expected to fail without retrying anything. If the handler is started at
+-  // around the same time as its client, something external to this code must be
+-  // done to guarantee correct ordering. When the client starts the handler
+-  // itself, CrashpadClient::StartHandler() provides this synchronization.
+-  for (;;) {
+-    ScopedFileHANDLE pipe(
+-        CreateFile(pipe_name.c_str(),
+-                   GENERIC_READ | GENERIC_WRITE,
+-                   0,
+-                   nullptr,
+-                   OPEN_EXISTING,
+-                   SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION,
+-                   nullptr));
+-    if (!pipe.is_valid()) {
+-      if (GetLastError() != ERROR_PIPE_BUSY) {
+-        PLOG(ERROR) << "CreateFile";
+-        return false;
+-      }
++namespace {
+
+-      if (!WaitNamedPipe(pipe_name.c_str(), NMPWAIT_WAIT_FOREVER)) {
+-        PLOG(ERROR) << "WaitNamedPipe";
+-        return false;
+-      }
++// The point a whole request to the handler must be done by. A handler that is
++// suspended or starved never answers, and an unbounded wait on it held its
++// client for good: a scope write froze the caller's thread, and a crash never
++// ended.
++class Deadline {
++ public:
++  explicit Deadline(DWORD timeout_ms)
++      : infinite_(timeout_ms == INFINITE),
++        end_(GetTickCount64() + timeout_ms) {}
++
++  DWORD Remaining() const {
++    if (infinite_) {
++      return INFINITE;
++    }
++    const ULONGLONG now = GetTickCount64();
++    return now >= end_ ? 0 : static_cast<DWORD>(end_ - now);
++  }
++
++ private:
++  bool infinite_;
++  ULONGLONG end_;
++};
+
+-      continue;
++// Opens the client end of |pipe_name| in message mode, for overlapped I/O so
++// that every read and write can be given up at the deadline.
++//
++// CreateFile() fails with ERROR_PIPE_BUSY while the handler is not waiting in
++// ConnectNamedPipe() on any instance. WaitNamedPipe() waits until one is
++// ready, but there’s no way to wait for this condition and atomically open the
++// client side of the pipe in a single operation, hence the loop. It retries
++// only on ERROR_PIPE_BUSY: if the handler hasn’t even called CreateNamedPipe()
++// yet, CreateFile() fails with ERROR_FILE_NOT_FOUND, and so does this. When the
++// client starts the handler itself, CrashpadClient::StartHandler() orders the
++// two.
++ScopedFileHANDLE ConnectToServer(const std::wstring& pipe_name,
++                                 const Deadline& deadline,
++                                 bool wait_for_instance) {
++  for (;;) {
++    ScopedFileHANDLE pipe(CreateFile(
++        pipe_name.c_str(),
++        GENERIC_READ | GENERIC_WRITE,
++        0,
++        nullptr,
++        OPEN_EXISTING,
++        SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION | FILE_FLAG_OVERLAPPED,
++        nullptr));
++    if (pipe.is_valid()) {
++      DWORD mode = PIPE_READMODE_MESSAGE;
++      if (!SetNamedPipeHandleState(pipe.get(), &mode, nullptr, nullptr)) {
++        PLOG(ERROR) << "SetNamedPipeHandleState";
++        return ScopedFileHANDLE();
++      }
++      return pipe;
+     }
+
+-    DWORD mode = PIPE_READMODE_MESSAGE;
+-    if (!SetNamedPipeHandleState(pipe.get(), &mode, nullptr, nullptr)) {
+-      PLOG(ERROR) << "SetNamedPipeHandleState";
+-      return false;
++    if (GetLastError() != ERROR_PIPE_BUSY) {
++      PLOG(ERROR) << "CreateFile";
++      return ScopedFileHANDLE();
+     }
+-    DWORD bytes_read = 0;
+-    BOOL result = TransactNamedPipe(
+-        pipe.get(),
+-        // This is [in], but is incorrectly declared non-const.
+-        const_cast<ClientToServerMessage*>(&message),
+-        sizeof(message),
+-        response,
+-        sizeof(*response),
+-        &bytes_read,
+-        nullptr);
+-    if (!result) {
+-      PLOG(ERROR) << "TransactNamedPipe";
+-      return false;
++    if (!wait_for_instance) {
++      return ScopedFileHANDLE();
+     }
+-    if (bytes_read != sizeof(*response)) {
+-      LOG(ERROR) << "TransactNamedPipe: expected " << sizeof(*response)
+-                 << ", observed " << bytes_read;
+-      return false;
++
++    // 0 would mean the pipe's default wait to WaitNamedPipe(), not none.
++    const DWORD remaining = deadline.Remaining();
++    if (remaining == 0 || !WaitNamedPipe(pipe_name.c_str(), remaining)) {
++      PLOG(ERROR) << "WaitNamedPipe";
++      return ScopedFileHANDLE();
+     }
+-    return true;
+   }
+ }
+
+-bool SendPayloadToCrashHandlerServer(
+-    const std::wstring& pipe_name,
+-    const ClientToServerMessage& message,
+-    base::span<const uint8_t> head,
+-    base::span<const uint8_t> tail,
+-    ServerToClientMessage* response) {
+-  // Retry CreateFile() in a loop (follows the logic in
+-  // SendToCrashHandlerServer).
+-  for (;;) {
+-    ScopedFileHANDLE pipe(
+-        CreateFile(pipe_name.c_str(),
+-                   GENERIC_READ | GENERIC_WRITE,
+-                   0,
+-                   nullptr,
+-                   OPEN_EXISTING,
+-                   SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION,
+-                   nullptr));
+-    if (!pipe.is_valid()) {
+-      if (GetLastError() != ERROR_PIPE_BUSY) {
+-        PLOG(ERROR) << "CreateFile";
+-        return false;
++// Ends an overlapped ReadFile() or WriteFile() on |pipe| that did not fail as
++// it started. It is |pending|, or else done already. An operation still pending
++// at |deadline| is cancelled. It has ended before this returns, since it writes
++// into |overlapped|.
++bool FinishOverlapped(HANDLE pipe,
++                      OVERLAPPED* overlapped,
++                      bool pending,
++                      const Deadline& deadline,
++                      DWORD* transferred,
++                      const char* operation) {
++  if (pending) {
++    const DWORD waited =
++        WaitForSingleObject(overlapped->hEvent, deadline.Remaining());
++    if (waited != WAIT_OBJECT_0) {
++      if (waited == WAIT_TIMEOUT) {
++        LOG(ERROR) << operation << ": the handler did not answer in time";
++      } else {
++        PLOG(ERROR) << "WaitForSingleObject";
+       }
++      CancelIoEx(pipe, overlapped);
++      GetOverlappedResult(pipe, overlapped, transferred, TRUE);
++      return false;
++    }
++  }
++  if (!GetOverlappedResult(pipe, overlapped, transferred, FALSE)) {
++    PLOG(ERROR) << operation;
++    return false;
++  }
++  return true;
++}
+
+-      if (!WaitNamedPipe(pipe_name.c_str(), NMPWAIT_WAIT_FOREVER)) {
+-        PLOG(ERROR) << "WaitNamedPipe";
+-        return false;
+-      }
++class OverlappedPipe {
++ public:
++  OverlappedPipe(ScopedFileHANDLE pipe, const Deadline& deadline)
++      : pipe_(std::move(pipe)),
++        event_(CreateEvent(nullptr, true, false, nullptr)),
++        read_event_(CreateEvent(nullptr, true, false, nullptr)),
++        deadline_(deadline) {
++    PLOG_IF(ERROR, !event_.is_valid() || !read_event_.is_valid())
++        << "CreateEvent";
++  }
+
+-      continue;
+-    }
++  bool is_valid() const {
++    return pipe_.is_valid() && event_.is_valid() && read_event_.is_valid();
++  }
+
+-    DWORD mode = PIPE_READMODE_MESSAGE;
+-    if (!SetNamedPipeHandleState(pipe.get(), &mode, nullptr, nullptr)) {
+-      PLOG(ERROR) << "SetNamedPipeHandleState";
++ private:
++  bool Write(const void* data, size_t size, const char* operation) {
++    OVERLAPPED overlapped = Start();
++    DWORD written = 0;
++    const DWORD length = base::checked_cast<DWORD>(size);
++    const BOOL started =
++        ::WriteFile(pipe_.get(), data, length, nullptr, &overlapped);
++    if (!started && GetLastError() != ERROR_IO_PENDING) {
++      PLOG(ERROR) << operation;
+       return false;
+     }
+-
+-    if (!WriteFile(pipe.get(), &message, sizeof(message))) {
+-      PLOG(ERROR) << "WriteFile (header)";
++    if (!FinishOverlapped(pipe_.get(),
++                          &overlapped,
++                          !started,
++                          deadline_,
++                          &written,
++                          operation)) {
+       return false;
+     }
+-
+-    if (!head.empty() &&
+-        !WriteFile(
+-            pipe.get(), head.data(), base::checked_cast<DWORD>(head.size()))) {
+-      PLOG(ERROR) << "WriteFile (payload head)";
++    if (written != length) {
++      LOG(ERROR) << operation << ": wrote " << written << " of " << length;
+       return false;
+     }
++    return true;
++  }
+
+-    if (!tail.empty() &&
+-        !WriteFile(
+-            pipe.get(), tail.data(), base::checked_cast<DWORD>(tail.size()))) {
+-      PLOG(ERROR) << "WriteFile (payload tail)";
++ public:
++  // Sends |message| and then |head| and |tail|, and receives the server's
++  // reply into |response|. The read is posted before anything is written, as
++  // TransactNamedPipe() does: the server answers some requests without
++  // flushing and disconnects at once, which discards a reply not yet awaited.
++  bool Exchange(const ClientToServerMessage& message,
++                base::span<const uint8_t> head,
++                base::span<const uint8_t> tail,
++                ServerToClientMessage* response) {
++    ResetEvent(read_event_.get());
++    OVERLAPPED reading = {};
++    reading.hEvent = read_event_.get();
++    const BOOL read_started = ::ReadFile(
++        pipe_.get(), response, sizeof(*response), nullptr, &reading);
++    if (!read_started && GetLastError() != ERROR_IO_PENDING) {
++      PLOG(ERROR) << "ReadFile (response)";
+       return false;
+     }
+
+-    if (!ReadFile(pipe.get(), response, sizeof(*response))) {
+-      PLOG(ERROR) << "ReadFile (response)";
++    const bool sent =
++        Write(&message, sizeof(message), "WriteFile (message)") &&
++        (head.empty() ||
++         Write(head.data(), head.size(), "WriteFile (payload head)")) &&
++        (tail.empty() ||
++         Write(tail.data(), tail.size(), "WriteFile (payload tail)"));
++    if (!sent) {
++      CancelIoEx(pipe_.get(), &reading);
++      DWORD ignored = 0;
++      GetOverlappedResult(pipe_.get(), &reading, &ignored, TRUE);
+       return false;
+     }
+
++    DWORD read = 0;
++    if (!FinishOverlapped(pipe_.get(),
++                          &reading,
++                          !read_started,
++                          deadline_,
++                          &read,
++                          "ReadFile (response)")) {
++      return false;
++    }
++    if (read != sizeof(*response)) {
++      LOG(ERROR) << "ReadFile (response): expected " << sizeof(*response)
++                 << ", observed " << read;
++      return false;
++    }
+     return true;
+   }
++
++ private:
++  OVERLAPPED Start() {
++    ResetEvent(event_.get());
++    OVERLAPPED overlapped = {};
++    overlapped.hEvent = event_.get();
++    return overlapped;
++  }
++
++  ScopedFileHANDLE pipe_;
++  ScopedKernelHANDLE event_;
++  ScopedKernelHANDLE read_event_;
++  const Deadline& deadline_;
++};
++
++}  // namespace
++
++bool SendToCrashHandlerServer(const std::wstring& pipe_name,
++                              const ClientToServerMessage& message,
++                              ServerToClientMessage* response,
++                              DWORD timeout_ms,
++                              bool wait_for_instance) {
++  const Deadline deadline(timeout_ms);
++  OverlappedPipe pipe(
++      ConnectToServer(pipe_name, deadline, wait_for_instance), deadline);
++  return pipe.is_valid() && pipe.Exchange(message, {}, {}, response);
++}
++
++bool SendPayloadToCrashHandlerServer(const std::wstring& pipe_name,
++                                     const ClientToServerMessage& message,
++                                     base::span<const uint8_t> head,
++                                     base::span<const uint8_t> tail,
++                                     ServerToClientMessage* response,
++                                     DWORD timeout_ms,
++                                     bool wait_for_instance) {
++  const Deadline deadline(timeout_ms);
++  OverlappedPipe pipe(
++      ConnectToServer(pipe_name, deadline, wait_for_instance), deadline);
++  return pipe.is_valid() && pipe.Exchange(message, head, tail, response);
+ }
+
+ HANDLE CreateNamedPipeInstance(const std::wstring& pipe_name,
+diff --git a/util/win/registration_protocol_win.h b/util/win/registration_protocol_win.h
+index d9ae2911..1f3278c2 100644
+--- a/util/win/registration_protocol_win.h
++++ b/util/win/registration_protocol_win.h
+@@ -32,10 +32,17 @@ namespace crashpad {
+ //! Typically clients will not use this directly, instead using
+ //! CrashpadClient::SetHandler().
+ //!
++//! \param[in] timeout_ms How long the whole exchange may take, from waiting
++//!     for a free pipe instance to the server's reply, or `INFINITE`.
++//! \param[in] wait_for_instance If `false`, fail at once when no pipe instance
++//!     is free instead of waiting for one.
++//!
+ //! \sa CrashpadClient::SetHandler()
+ bool SendToCrashHandlerServer(const std::wstring& pipe_name,
+                               const ClientToServerMessage& message,
+-                              ServerToClientMessage* response);
++                              ServerToClientMessage* response,
++                              DWORD timeout_ms = INFINITE,
++                              bool wait_for_instance = true);
+
+ //! \brief Connect over the given \a pipe_name, passing a message with a
+ //!     variable-length payload to the server.
+@@ -48,14 +55,17 @@ bool SendToCrashHandlerServer(const std::wstring& pipe_name,
+ //! \param[in] head The first payload bytes to send after \a message.
+ //! \param[in] tail Payload bytes to send after \a head.
+ //! \param[out] response The server's response.
++//! \param[in] timeout_ms As for SendToCrashHandlerServer().
++//! \param[in] wait_for_instance As for SendToCrashHandlerServer().
+ //!
+ //! \return `true` on success, `false` on failure with a message logged.
+-bool SendPayloadToCrashHandlerServer(
+-    const std::wstring& pipe_name,
+-    const ClientToServerMessage& message,
+-    base::span<const uint8_t> head,
+-    base::span<const uint8_t> tail,
+-    ServerToClientMessage* response);
++bool SendPayloadToCrashHandlerServer(const std::wstring& pipe_name,
++                                     const ClientToServerMessage& message,
++                                     base::span<const uint8_t> head,
++                                     base::span<const uint8_t> tail,
++                                     ServerToClientMessage* response,
++                                     DWORD timeout_ms = INFINITE,
++                                     bool wait_for_instance = true);
+
+ //! \brief Wraps CreateNamedPipe() to create a single named pipe instance.
+ //!

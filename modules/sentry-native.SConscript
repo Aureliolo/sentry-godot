@@ -171,11 +171,13 @@ sentry_native_path = Dir('sentry-native').abspath
 # The fork's fixes to code sentry-native pins in submodules of its own, which the fork cannot pin,
 # go onto that checkout before CMake runs: patches/<name>/*.patch onto external/<name>.
 patches = sorted(Glob("patches/*/*.patch"), key=str)
+# Resolved here: an action runs from the top directory, where a relative Dir() points elsewhere.
+external_path = Dir("sentry-native/external").abspath
 
 
 def apply_patches(target, source, env):
     for patch in patches:
-        tree = Dir("sentry-native/external").Dir(patch.dir.name).abspath
+        tree = os.path.join(external_path, patch.dir.name)
 
         def git_apply(*flags):
             return subprocess.run(["git", "-C", tree, "apply", *flags, patch.abspath],

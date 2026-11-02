@@ -4,10 +4,12 @@
 
 Runs a headless project carrying the addon (project/addons/sentry as the builds left it, or the
 folder --addon names) that crashes on purpose a second after the SDK is up. Each Godot runs it
-three times: with the crash handler left alone, with the run's own crashpad_handler suspended as it
-starts, and with it suspended once the SDK is up. The first run must leave a minidump. The other
-two must end with the same exit code as the first within the limit. Only a handler started by this
-run is touched, and it is resumed and ended by its pid.
+four times. The first leaves the SDK uninitialised, for the exit code the engine gives a crash on
+its own. The second leaves the crash handler alone and must leave a minidump. The third suspends
+the run's own crashpad_handler as it starts, and the fourth once the SDK is up. These two must end
+within the limit, with the exit code of the second run or of the first. A handler that never
+answered its start leaves the crash to the engine, so on Linux it ends as the first run does. Only
+a handler started by this run is touched, and it is resumed and ended by its pid.
 """
 
 import argparse
@@ -35,7 +37,7 @@ CRASH = (
 # The DSN points nowhere that answers, so the SDK starts and sends nothing.
 SETTINGS = '\n[sentry]\n\noptions/dsn="https://public@127.0.0.1:9/1"\n'
 UP = b"quit.gd up"
-CASES = ("never", "as it starts", "once up")
+CASES = ("without the SDK", "never", "as it starts", "once up")
 
 
 class Handlers:
@@ -131,7 +133,8 @@ class Handlers:
 
 def run(godot: str, addon: Path, case: str, limit: float) -> tuple[int | None, float, int, str]:
     with tempfile.TemporaryDirectory(prefix="sentry-handler-stall-", ignore_cleanup_errors=True) as scratch:
-        where = clean_exit.project(Path(scratch) / "p", SETTINGS, addon)
+        settings = "" if case == "without the SDK" else SETTINGS
+        where = clean_exit.project(Path(scratch) / "p", settings, addon)
         (where / "quit.gd").write_text(CRASH, encoding="utf-8")
         home = Path(scratch) / "user"
         env = os.environ | {"APPDATA": str(home), "XDG_DATA_HOME": str(home)}
@@ -159,7 +162,7 @@ def run(godot: str, addon: Path, case: str, limit: float) -> tuple[int | None, f
                     time.sleep(0.005)
 
             watcher = threading.Thread(target=stall, daemon=True)
-            if case != "never":
+            if case in ("as it starts", "once up"):
                 watcher.start()
             try:
                 code = engine.wait(timeout=limit)
@@ -185,15 +188,18 @@ def main() -> None:
         sys.exit(f"no addon at {asked.addon}: build it first")
     failed = False
     for godot in asked.godot:
-        crashed = None
+        crash_codes: set[int] = set()
         for case in CASES:
             code, elapsed, dumps, said = run(godot, asked.addon, case, asked.limit)
             shown = "hung" if code is None else f"exit {code & 0xFFFFFFFF:#x}" if sys.platform == "win32" else f"exit {code}"
-            if case == "never":
-                crashed = code
+            if case == "without the SDK":
+                ok = code not in (None, 0)
+            elif case == "never":
                 ok = code not in (None, 0) and dumps > 0
             else:
-                ok = code is not None and code == crashed
+                ok = code in crash_codes
+            if ok and code is not None and case in ("without the SDK", "never"):
+                crash_codes.add(code)
             failed |= not ok
             print(f"{'ok  ' if ok else 'FAIL'} {case}, {godot}: {shown} after {elapsed:.0f} s, {dumps} minidump(s)")
             if not ok:
